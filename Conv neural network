@@ -1,1 +1,514 @@
+import os
+import re
+import sys
+import numpy as np
+from numpy import array as arr
+import matplotlib.pyplot as plt
 
+# 路径导入
+
+train_txt_filename = os.listdir(r'D:\桌面\学习\大三\大三下学期\空间资料处理综合实习\实验二\train_txt')[:-1]
+train_txt_filename.sort(key = lambda x : int(re.split('[_.]',x)[-2]))
+test_txt_filename  = os.listdir(r'D:\桌面\学习\大三\大三下学期\空间资料处理综合实习\实验二\test_txt')[:-1]
+test_txt_filename.sort(key = lambda x : int(re.split('[_.]',x)[-2]))
+
+folderpath = 'D:\桌面\学习\大三\大三下学期\空间资料处理综合实习\实验二'
+
+# txt_2_image
+'''
+train_pic_savename = ['train_'+str(i)+'.png' for i in range(len(train_txt_filename))]
+test_pic_savename  = ['test_'+str(i)+'.png' for i in range(len(test_txt_filename))]
+
+def draw_pic(file_path,save_path):
+    pix_lt = []
+    with open(file_path) as txt_file:
+        for line in txt_file:
+            ln = line.split(',')
+            pix_lt.append([int(ele) for ele in ln])
+    txt_file.close()
+    plt.imshow(pix_lt,cmap = plt.cm.gray)  #gray
+    #plt.imshow(pix_lt)                    #hot
+    plt.axis('off')
+    plt.savefig(save_path , bbox_inches = 'tight' , pad_inches = 0.0)
+    plt.close()
+
+for i in range(len(train_txt_filename)):
+    draw_pic(rf'{folderpath}\train_txt\{train_txt_filename[i]}',rf'{folderpath}\train_pic\{train_pic_savename[i]}')
+    print('训练集图像余',len(train_txt_filename)-i)
+
+for i in range(len(test_txt_filename)):
+    draw_pic(rf'{folderpath}\test_txt\{test_txt_filename[i]}',rf'{folderpath}\test_pic\{test_pic_savename[i]}')
+    print('测试集图像余',len(test_txt_filename)-i)
+print('Done')
+'''
+
+# 得到数据
+
+def get_data(folder_path,folder_name):  #返回n个(图像)数据的数组以及对应分类结果数组
+    pix_matrix = []
+    
+    txt_filename = os.listdir(rf'{folder_path}\{folder_name}')[:-1]
+    txt_filename.sort(key = lambda x : int(re.split('[_.]',x)[-2])) #排序
+
+    result_file_name = os.listdir(rf'{folder_path}\{folder_name}')[-1]
+    
+    for file_name in txt_filename: 
+        with open(rf'{folder_path}\{folder_name}\{file_name}') as f:
+            pix_list = []
+            for line in f:
+                line = line.split(',')
+                pix_list.append([int(ele) for ele in line])
+        f.close()
+        pix_matrix.append(pix_list)
+
+    result_path = rf'{folder_path}\{folder_name}\{result_file_name}'
+
+    with open(result_path) as result_file:
+        result_list = [int(line.split()[-1]) for line in result_file]  #704
+    result_file.close()
+
+    return arr(pix_matrix),arr(result_list)
+
+in_train , label_train =  get_data(folderpath,'train_txt')
+in_test  , label_test =  get_data(folderpath,'test_txt')
+
+
+in_train = in_train / 1.0  # 704*150*150
+in_test  = (in_test - np.mean(in_test))/np.std(in_test)   # 88*150*150
+
+# 模型定义
+class CNN_model:
+   
+    # 正向传播
+
+    # 激活函数relu
+    def relu(self,inp_ly):                      # 输入 张量 输出 激活函数后的张量
+        inp_ly[inp_ly<0] = 0
+        return inp_ly
+    
+    # 1 卷积层
+    def conv(self,inp_ly,kernel,bais):          # 输入 张量类型，卷积核，偏置值 输出 张量
+
+        i_c,i_h,i_w = inp_ly.shape
+        k_n,k_c,k_h,k_w = kernel.shape
+        out_h = i_h-k_h+1 ; out_w = i_w-k_w+1 #输出行列大小
+        out_ly = np.zeros((k_n,out_h,out_w)) #定义输出纬度
+        
+        for n in range(k_n):  #几个卷积核，输出为几层
+            sig_ker_out = np.zeros((out_h,out_w))#单个卷积核输出
+            
+            for c in range(i_c): #深度
+                sig_out = np.zeros((out_h * out_w,k_h * k_w));ix = 0 #单个输出 img2col
+                ker_col_ver = kernel[n][c].reshape(-1)  #卷积核列向量化
+                
+                for row in range(out_h):
+                    for col in range(out_w):
+                        inp_ly_col_ver = inp_ly[c][row : row+k_h , col : col+k_w].reshape(-1)
+                        sig_out[ix] = inp_ly_col_ver
+                        ix+=1
+                
+            out_ly[n] = np.dot(sig_out,ker_col_ver).reshape(out_h,out_w) + bais[n]
+        
+        return out_ly
+
+    # 2 池化层
+    def max_pooling(self,inp_ly,stride):        # 输入 图像纬度必须为偶数，步长
+
+        i_c,i_h,i_w = inp_ly.shape
+        out_ly = np.zeros((i_c,int(i_h/stride),int(i_w/stride)))       #定义输出纬度
+        out_loc = np.zeros((i_c,int(i_h/stride) * int(i_w/stride),2)) #定义最大池化池化输出位置纬度
+
+        for c in range(i_c): #深度
+                sig_out = np.zeros(int(i_h/stride) * int(i_w/stride));ix = 0 #池化层列向量化
+                
+                for row in range(int(i_h/stride)):
+                    for col in range(int(i_w/stride)):
+                        
+                        inp_ly_col_ver = inp_ly[c][row*stride : row*stride+stride , col*stride : col*stride+stride].reshape(-1)
+                        sig_out[ix] = np.max(inp_ly_col_ver)
+                        out_loc[c][ix][0] = int(np.argmax(inp_ly_col_ver)/stride) + row * stride
+                        out_loc[c][ix][1] = np.argmax(inp_ly_col_ver) % 2 + col * stride
+                        ix+=1
+                out_ly[c] = sig_out.reshape(int(i_h/stride),int(i_w/stride))
+        out_loc = out_loc.astype(int)
+        return out_ly,out_loc
+
+    # 3 全连接层
+    def full_connect(self,inp_ly,wight,bais):   # 输入 数组类型，权重矩阵，偏置值 输出 数组
+        out_ly_z = np.dot(inp_ly,wight)
+        out_ly_z += bais
+        return out_ly_z
+    
+    # 4 输出层
+    def imp_softmax(self,inp_ly):              # 输入 数组类型，softmax计算概率
+        redu_data = inp_ly - np.max(inp_ly)
+        output = np.exp(redu_data) / np.sum(np.exp(redu_data))
+        return output
+
+    # 5 损失计算
+    def softmax_loss_cal(self,inp_ly,label):            #softmax交叉熵损失函数
+
+        # loss = -np.log(inp_ly[label])
+        redu_data = inp_ly - np.max(inp_ly)
+        loss = -(redu_data[label] - np.log(np.sum(np.exp(redu_data))))
+        return loss
+
+    # 反向传播
+
+    # 0 dropout
+    def dropout(self,inp_ly,droprat):
+        drop = (np.random.rand(*inp_ly.shape) < droprat) / droprat
+        inp_ly *= drop
+        return inp_ly
+
+    # 1 输出层               # 输入 最终输出概率，标签 
+                            # 输出 输出层误差敏感度
+    def rev_output_ly_sen(self,fl_output,label): 
+        one_hot = np.zeros(2,dtype=int)
+        one_hot[label]=1
+        P_LdivZ = fl_output - one_hot             # P_LdivZ 误差敏感度
+        return P_LdivZ
+
+    # 2 全连接层             # 输入 下层输出，当前层误差敏感度，当前层未激活输出,上层权重矩阵，上层误差敏感度，是否输出层
+                            # 输出 当前层误差敏感度，损失函数对权重矩阵，偏置值的导数
+    def rev_full_con_w_b(self,downly_a_output , thisly_sen_output , thisly_z , uply_weight , uply_sen , decide):
+        if decide == 'output_layer':
+
+            P_LdivW = np.array(np.matmul(np.mat(downly_a_output).T,np.mat(thisly_sen_output)))
+            P_LdivB = thisly_sen_output
+            
+            return P_LdivW,P_LdivB
+        else :
+            thisly_z[thisly_z < 0] = 0 ; thisly_z[thisly_z > 0] = 1
+            thisly_sen =  np.dot(uply_weight,uply_sen) * thisly_z
+
+            P_LdivW = np.array(np.matmul(np.mat(downly_a_output).T,np.mat(thisly_sen)))
+            P_LdivB = thisly_sen
+            
+            return thisly_sen,P_LdivW,P_LdivB
+    
+    # 3 池化层 到 卷积层     # 输入 池化层误差敏感度，最大池化位置，卷积步长
+                            # 输出 卷积层误差敏感度
+    def rev_pooling_conv(self,pool_sen,max_loc,stride): 
+
+        i_c,i_h,i_w = pool_sen.shape
+        convly_sen = np.zeros((i_c,i_h*stride,i_w*stride))
+        for c in range(i_c):
+            n = 0
+            for row in range(i_h):
+                for col in range(i_w):
+                    x = max_loc[c][n][0]
+                    y = max_loc[c][n][1]
+                    convly_sen[c][x][y] = pool_sen[c][row][col]
+                    n+=1
+
+        return convly_sen
+    
+    # 4 卷积层 到 池化层     #输入 池化层输出张量, 卷积层卷积核, 卷积层误差敏感度
+                            #输出 池化层误差敏感度, 卷积层损失函数对卷积核, 偏置值的偏导
+    def rev_conv_pooling(self,downly_a,thisly_wight,thisly_sen):   
+        
+        a_c , a_h , a_w = downly_a.shape
+        z_c , z_h , z_w = thisly_sen.shape
+        w_n , w_c , w_h , w_w = thisly_wight.shape
+        
+        rev_uply_wight = thisly_wight.reshape(w_c,w_n,w_h,w_w)
+        
+        pad_size = w_h - 1
+        
+        thisly_pad_sen = np.pad(thisly_sen,((0,0),(pad_size,pad_size),(pad_size,pad_size)))
+        poolly_sen = self.conv(thisly_pad_sen , np.rot90(rev_uply_wight,2) , np.zeros(w_c))
+        
+        P_LdivW_cf2d = np.zeros((a_c,z_c,a_h-z_h+1,a_w-z_w+1)) #定义卷积核（纬度） 前两个纬度调换方便卷积
+        
+        for c in range(a_c):
+
+            P_LdivW_s = self.conv(np.rot90(downly_a[c].reshape(1,a_h,a_w),2) , thisly_sen.reshape(z_c,1,z_h,z_w) , np.zeros(z_c))
+            P_LdivW_cf2d[c] = P_LdivW_s
+            
+        P_LdivW = P_LdivW_cf2d.reshape(z_c,a_c,a_h-z_h+1,a_w-z_w+1) #把卷积核调整为正确的纬度
+            
+        P_LdivB = np.sum(thisly_sen,axis=(1,2))
+        
+        return poolly_sen,P_LdivW,P_LdivB
+
+    # 5 卷积层 到 卷积层     # 输入 下层卷积层输出张量，当前层卷积层未激活输出，上层卷积层误差敏感度，上层卷积核
+                            # 输出 当前层卷积层误差敏感度，当前层卷积层损失函数对卷积核 ，偏置值的偏导
+    def rev_conv_conv(self,downly_a,thisly_z ,uply_sen,uply_wight): 
+        s_c , s_h , s_w = uply_sen.shape
+        w_n , w_c , w_h , w_w = uply_wight.shape
+        
+        rev_uply_wight = uply_wight.reshape(w_c,w_n,w_h,w_w)
+        
+        pad_size = w_h - 1
+        thisly_z[thisly_z<0] = 0 ; thisly_z[thisly_z>0] = 1 
+        uply_sen = np.pad(uply_sen,((0,0),(pad_size,pad_size),(pad_size,pad_size)))
+        thisly_sen = self.conv1(uply_sen , np.rot90(rev_uply_wight,2) , np.zeros(s_c))
+        thisly_sen = thisly_sen * thisly_z
+        
+        a_c , a_h , a_w = downly_a.shape
+        z_c , z_h , z_w = thisly_z.shape
+        
+        P_LdivW_cf2d = np.zeros((a_c,z_c,a_h-z_h+1,a_w-z_w+1)) #定义卷积核（纬度） 前两个纬度调换方便卷积
+        
+        for c in range(a_c):
+
+            P_LdivW_s = self.conv1(np.rot90(downly_a[c].reshape(1,a_h,a_w),2) , thisly_sen.reshape(z_c,1,z_h,z_w) , np.zeros(z_c))
+            P_LdivW_cf2d[c] = P_LdivW_s
+        P_LdivW = P_LdivW_cf2d.reshape(z_c,a_c,a_h-z_h+1,a_w-z_w+1) #把卷积核调整为正确的纬度
+            
+        P_LdivB = np.sum(thisly_sen,axis=(1,2))
+        
+        return thisly_sen,P_LdivW,P_LdivB
+
+# 输入元组（各层卷积核或权重矩阵和偏置值），图像数据，标签值 
+# 输出损失函数各个层对卷积核（权重矩阵）偏导数
+
+def CNN_train(tuple_kw_b,data,label): 
+
+    # 前向传播
+    L1_z = CNN.conv(data,tuple_kw_b[0],tuple_kw_b[1])                 # 未激活输出
+    L1_a = CNN.relu(L1_z)                                             # relu激活输出
+    L2_p , L2_loc = CNN.max_pooling(L1_a,2)                           # 输出，argmax  
+
+    L3_z = CNN.conv(L2_p,tuple_kw_b[2],tuple_kw_b[3])
+    #L3_z_skip = CNN.conv(L2_p,np.ones(tuple_kw_b[2].shape),np.zeros(tuple_kw_b[3].shape))
+    L3_a = CNN.relu(L3_z)
+    L4_p , L4_loc = CNN.max_pooling(L3_a,2)
+
+    L5_z = CNN.conv(L4_p,tuple_kw_b[4],tuple_kw_b[5])
+    L5_a = CNN.relu(L5_z)
+
+    L5_2_col = L5_a.reshape(-1)
+
+    # 全连接
+    L5_2_col_drop = CNN.dropout(L5_2_col,0.05) # dropout
+
+    L6_z = CNN.full_connect(L5_2_col_drop,tuple_kw_b[6],tuple_kw_b[7])
+    L6_a = CNN.relu(L6_z)
+    
+    L7_z = CNN.full_connect(L6_a,tuple_kw_b[8],tuple_kw_b[9])
+    L7_a = CNN.relu(L7_z)
+
+    L8_z = CNN.full_connect(L7_a,tuple_kw_b[10],tuple_kw_b[11])
+
+    fl_out = CNN.imp_softmax(L8_z)
+    loss = CNN.softmax_loss_cal(L8_z,label)
+
+    # 反向传播
+    out_ly_sen = CNN.rev_output_ly_sen(fl_out,label)
+
+    # 全连接
+    rev_L8_L_div_w , rev_L8_L_div_b = CNN.rev_full_con_w_b(L7_a,out_ly_sen,0,0,0,'output_layer')
+    rev_L7_sen , rev_L7_L_div_w , rev_L7_L_div_b = CNN.rev_full_con_w_b(L6_a,0,L7_z,tuple_kw_b[10],out_ly_sen,'none')
+    rev_L6_sen , rev_L6_L_div_w , rev_L6_L_div_b = CNN.rev_full_con_w_b(L5_2_col_drop,0,L6_z,tuple_kw_b[8],rev_L7_sen,'none')
+    rev_L5_col_sen , none1 , none2 = CNN.rev_full_con_w_b(0,0,L5_2_col_drop,tuple_kw_b[6],rev_L6_sen,'none')
+
+    rev_L5_sen = rev_L5_col_sen.reshape(8,30,30)
+
+    # 卷积池化
+    rev_L4_sen , rev_L5_L_div_k , rev_L5_L_div_b = CNN.rev_conv_pooling(L4_p,tuple_kw_b[4],rev_L5_sen)
+    rev_L3_sen = CNN.rev_pooling_conv(rev_L4_sen,L4_loc,2)
+
+    rev_L2_sen , rev_L3_L_div_k , rev_L3_L_div_b = CNN.rev_conv_pooling(L2_p,tuple_kw_b[2],rev_L3_sen)
+    rev_L1_sen = CNN.rev_pooling_conv(rev_L2_sen,L2_loc,2)
+
+    data_sen , rev_L1_L_div_k , rev_L1_L_div_b = CNN.rev_conv_pooling(data,tuple_kw_b[0],rev_L1_sen)
+
+    return rev_L1_L_div_k,rev_L1_L_div_b,\
+           rev_L3_L_div_k,rev_L3_L_div_b,\
+           rev_L5_L_div_k,rev_L5_L_div_b,\
+           rev_L6_L_div_w,rev_L6_L_div_b,\
+           rev_L7_L_div_w,rev_L7_L_div_b,\
+           rev_L8_L_div_w,rev_L8_L_div_b,\
+           fl_out , loss
+
+def CNN_train_prograss(epoch,learn_rat,mini_batch_size,in_train,label_train):  
+
+    tuple_kw_b = init(0)
+
+    for epo in range(epoch):
+       
+        mini_batch = np.random.randint(0,len(in_train),(mini_batch_size))
+        mini_batch_data = in_train[mini_batch].reshape(mini_batch_size,1,150,150)
+        #近白化
+        mini_batch_data = (mini_batch_data - np.mean(mini_batch_data) / np.std(mini_batch_data))
+        #accuracy
+        accuracy_count = 0
+        
+        print('epoch:',epo+1,'/',str(epoch))
+
+        #初始化 进行累加
+        sum_L1_L_div_k , sum_L1_L_div_b = np.zeros((6,1,7,7)) , np.zeros((6))  
+        sum_L3_L_div_k , sum_L3_L_div_b = np.zeros((12,6,5,5)) , np.zeros((12))  
+        sum_L5_L_div_k , sum_L5_L_div_b = np.zeros((8,12,5,5)) , np.zeros((8))  
+
+        sum_L6_L_div_w , sum_L6_L_div_b = np.zeros((7200,600)) , np.zeros((600))  
+        sum_L7_L_div_w , sum_L7_L_div_b = np.zeros((600,24)) , np.zeros((24))  
+        sum_L8_L_div_w , sum_L8_L_div_b = np.zeros((24,2)) , np.zeros((2))  
+
+        for index in range(mini_batch_size):
+
+            data = mini_batch_data[index]
+            label = label_train[mini_batch[index]]
+
+            L1_L_div_k , L1_L_div_b , L3_L_div_k , L3_L_div_b ,\
+            L5_L_div_k , L5_L_div_b , L6_L_div_w , L6_L_div_b ,\
+            L7_L_div_w , L7_L_div_b , L8_L_div_w , L8_L_div_b ,\
+            fl_out , loss = CNN_train(tuple_kw_b,data,label)
+            
+            sum_L1_L_div_k += L1_L_div_k ; sum_L1_L_div_b += L1_L_div_b
+            sum_L3_L_div_k += L3_L_div_k ; sum_L3_L_div_b += L3_L_div_b
+            sum_L5_L_div_k += L5_L_div_k ; sum_L5_L_div_b += L5_L_div_b
+            
+            sum_L6_L_div_w += L6_L_div_w ; sum_L6_L_div_b += L6_L_div_b
+            sum_L7_L_div_w += L7_L_div_w ; sum_L7_L_div_b += L7_L_div_b
+            sum_L8_L_div_w += L8_L_div_w ; sum_L8_L_div_b += L8_L_div_b
+            
+            if np.argmax(fl_out) == label: 
+                accuracy_count += 1
+
+            print('\r', str(index+1).rjust(2,'0') , '/' , str(mini_batch_size) ,\
+                ': [' , '=' * int((index+1)/2) , '>' , '=' * int(mini_batch_size/2-int(np.ceil(index/2))) ,\
+                '] ' , 'loss:' , str(loss)[0:6].ljust(6) , 'accuracy :' , str(accuracy_count/(index+1))[0:5].ljust(5) ,\
+                '|' , str(round(fl_out[0],5))[0:6].ljust(6),str(round(fl_out[1],5))[0:6].ljust(6), '|' , str(label) , end='')
+        
+        avg_L1_L_div_k = sum_L1_L_div_k / mini_batch_size ; avg_L1_L_div_b = sum_L1_L_div_b / mini_batch_size
+        avg_L3_L_div_k = sum_L3_L_div_k / mini_batch_size ; avg_L3_L_div_b = sum_L3_L_div_b / mini_batch_size
+        avg_L5_L_div_k = sum_L5_L_div_k / mini_batch_size ; avg_L5_L_div_b = sum_L5_L_div_b / mini_batch_size
+        
+        avg_L6_L_div_w = sum_L6_L_div_w / mini_batch_size ; avg_L6_L_div_b = sum_L6_L_div_b / mini_batch_size
+        avg_L7_L_div_w = sum_L7_L_div_w / mini_batch_size ; avg_L7_L_div_b = sum_L7_L_div_b / mini_batch_size
+        avg_L8_L_div_w = sum_L8_L_div_w / mini_batch_size ; avg_L8_L_div_b = sum_L8_L_div_b / mini_batch_size
+        
+        #更新卷积核（权重矩阵），偏置值
+        L1_k = tuple_kw_b[0] ; L1_b = tuple_kw_b[1] ; L3_k = tuple_kw_b[2] ; L3_b = tuple_kw_b[3]
+        L5_k = tuple_kw_b[4] ; L5_b = tuple_kw_b[5] ; L6_w = tuple_kw_b[6] ; L6_b = tuple_kw_b[7]
+        L7_w = tuple_kw_b[8] ; L7_b = tuple_kw_b[9] ; L8_w = tuple_kw_b[10] ; L8_b = tuple_kw_b[11]
+
+        L1_k -= (learn_rat * avg_L1_L_div_k) ; L1_b -= (learn_rat * avg_L1_L_div_b)
+        L3_k -= (learn_rat * avg_L3_L_div_k) ; L3_b -= (learn_rat * avg_L3_L_div_b)
+        L5_k -= (learn_rat * avg_L5_L_div_k) ; L5_b -= (learn_rat * avg_L5_L_div_b)
+
+        L6_w -= (learn_rat * avg_L6_L_div_w) ; L6_b -= (learn_rat * avg_L6_L_div_b)
+        L7_w -= (learn_rat * avg_L7_L_div_w) ; L7_b -= (learn_rat * avg_L7_L_div_b)
+        L8_w -= (learn_rat * avg_L8_L_div_w) ; L8_b -= (learn_rat * avg_L8_L_div_b)
+
+        tuple_kw_b = (L1_k,L1_b,L3_k,L3_b,L5_k,L5_b,L6_w,L6_b,L7_w,L7_b,L8_w,L8_b) 
+        #save_kw_b(kw_b_folderpath,tuple_kw_b)
+        print('\n'+ 'accuracy:',accuracy_count/mini_batch_size)
+
+    return tuple_kw_b
+
+def CNN_test_prograss(in_test,label_test):
+    tuple_kw_b = init(1)
+    arrcuray = 0
+    for num in range(len(in_test)):
+
+        data = in_test[num].reshape(1,150,150)
+        label = label_test[num]
+
+        L1_z = CNN.conv(data,tuple_kw_b[0],tuple_kw_b[1])                 # 未激活输出
+        L1_a = CNN.relu(L1_z)                                             # relu激活输出
+        L2_p , L2_loc = CNN.max_pooling(L1_a,2)                           # 输出，argmax  
+
+        L3_z = CNN.conv(L2_p,tuple_kw_b[2],tuple_kw_b[3])
+        #L3_z_skip = CNN.conv(L2_p,np.ones(tuple_kw_b[2].shape),np.zeros(tuple_kw_b[3].shape))
+        L3_a = CNN.relu(L3_z)
+        L4_p , L4_loc = CNN.max_pooling(L3_a,2)
+
+        L5_z = CNN.conv(L4_p,tuple_kw_b[4],tuple_kw_b[5])
+        L5_a = CNN.relu(L5_z)
+
+        L5_2_col = L5_a.reshape(-1)
+
+        # 全连接
+
+        L6_z = CNN.full_connect(L5_2_col,tuple_kw_b[6],tuple_kw_b[7])
+        L6_a = CNN.relu(L6_z)
+        
+        L7_z = CNN.full_connect(L6_a,tuple_kw_b[8],tuple_kw_b[9])
+        L7_a = CNN.relu(L7_z)
+
+        L8_z = CNN.full_connect(L7_a,tuple_kw_b[10],tuple_kw_b[11])
+        fl_out = CNN.imp_softmax(L8_z)
+        loss = CNN.softmax_loss_cal(L8_z,label)
+
+        if label == np.argmax(fl_out) : arrcuray+=1
+        print('\r', str(num+1).rjust(2,'0') , '/' , str(len(in_test)) ,\
+                ': [' , '=' * int((num+1)/2) , '>' , '=' * int(len(in_test)/2-int(np.ceil(num/2))) ,\
+                ']  ' , 'loss :' , str(loss)[0:6].ljust(6) , ' accuracy :' , str(arrcuray/(num+1))[0:5].ljust(5) ,\
+                '|| ' , 'p:',str(np.argmax(fl_out)),'label:',str(label), end='')
+    print('test_accuracy :',arrcuray/len(in_test))
+
+def save_kw_b(folder_path,tuple_kw_b):
+    np.save(rf'{folder_path}\L1_k',arr = tuple_kw_b[0])
+    np.save(rf'{folder_path}\L1_b',arr = tuple_kw_b[1])
+    np.save(rf'{folder_path}\L3_k',arr = tuple_kw_b[2])
+    np.save(rf'{folder_path}\L3_b',arr = tuple_kw_b[3])
+    np.save(rf'{folder_path}\L5_k',arr = tuple_kw_b[4])
+    np.save(rf'{folder_path}\L5_b',arr = tuple_kw_b[5])
+    np.save(rf'{folder_path}\L6_w',arr = tuple_kw_b[6])
+    np.save(rf'{folder_path}\L6_b',arr = tuple_kw_b[7]) 
+    np.save(rf'{folder_path}\L7_w',arr = tuple_kw_b[8])
+    np.save(rf'{folder_path}\L7_b',arr = tuple_kw_b[9]) 
+    np.save(rf'{folder_path}\L8_w',arr = tuple_kw_b[10])
+    np.save(rf'{folder_path}\L8_b',arr = tuple_kw_b[11]) 
+    print('保存成功')
+
+def load_kw_b(folder_path):
+    L1_k = np.load(rf'{folder_path}\L1_k.npy')
+    L1_b = np.load(rf'{folder_path}\L1_b.npy')
+    L3_k = np.load(rf'{folder_path}\L3_k.npy')
+    L3_b = np.load(rf'{folder_path}\L3_b.npy')
+    L5_k = np.load(rf'{folder_path}\L5_k.npy')
+    L5_b = np.load(rf'{folder_path}\L5_b.npy')
+    L6_w = np.load(rf'{folder_path}\L6_w.npy')
+    L6_b = np.load(rf'{folder_path}\L6_b.npy')
+    L7_w = np.load(rf'{folder_path}\L7_w.npy')
+    L7_b = np.load(rf'{folder_path}\L7_b.npy')
+    L8_w = np.load(rf'{folder_path}\L8_w.npy')
+    L8_b = np.load(rf'{folder_path}\L8_b.npy')
+    print('加载成功')
+    return (L1_k,L1_b,L3_k,L3_b,L5_k,L5_b,L6_w,L6_b,L7_w,L7_b,L8_w,L8_b)
+
+# 初始化卷积核,偏置值
+def init(d): #0 重新初始化 其他 加载初始化
+    if d == 0:
+        # 卷积核,偏置值初始化
+        L1_k = np.random.randn(294).reshape(6,1,7,7)
+        L1_b = np.zeros(6)+0.01
+        L3_k = np.random.randn(1800).reshape(12,6,5,5)
+        L3_b = np.zeros(12)+0.01
+        L5_k = np.random.randn(2400).reshape(8,12,5,5)
+        L5_b = np.zeros(8)+0.01
+        # 全连接权重矩阵,偏置值初始化
+        L6_w = np.random.randn(4320000).reshape(7200,600)
+        L6_b = np.zeros(600)+0.01
+        L7_w = np.random.randn(14400).reshape(600,24)
+        L7_b = np.zeros(24)+0.01
+        L8_w = np.random.randn(48).reshape(24,2)
+        L8_b = np.zeros(2)+0.01
+        tuple_kw_b = (L1_k,L1_b,L3_k,L3_b,L5_k,L5_b,L6_w,L6_b,L7_w,L7_b,L8_w,L8_b) 
+    
+    else : 
+        tuple_kw_b = load_kw_b(kw_b_folderpath)
+
+    return tuple_kw_b
+
+epoch = 100
+mini_batch_size = 22
+ # 学习率
+Learn_rat = 0.001
+kw_b_folderpath = r'D:\桌面\学习\大三\大三下学期\空间资料处理综合实习\实验二\卷积核_权重矩阵_偏置值'
+
+CNN = CNN_model()
+tuple_kw_b = CNN_train_prograss(epoch,Learn_rat,mini_batch_size,in_train,label_train)
+
+CNN_test_prograss(in_test,label_test)
+save_kw_b(kw_b_folderpath,tuple_kw_b)
+
+# L1_L_div_k , L1_L_div_b , L3_L_div_k , L3_L_div_b ,\
+# L5_L_div_k , L5_L_div_b , L6_L_div_w , L6_L_div_b ,\
+# L7_L_div_w , L7_L_div_b , L8_L_div_w , L8_L_div_b ,\
+# fl_out , loss = CNN_train(tuple_kw_b,in_train[0].reshape(1,150,150),label_train[0])
